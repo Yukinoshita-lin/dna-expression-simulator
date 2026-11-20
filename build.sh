@@ -9,8 +9,8 @@ mkdir -p build
 echo "[1/2] Compiling resources..."
 windres -i src/app.rc -o build/app_res.o --include-dir=src
 echo "[2/2] Building DNAExpressionSim.exe..."
-g++ -std=c++17 -O2 -DUNICODE -D_UNICODE -mwindows \
-  src/main.cpp src/ui.cpp src/views.cpp src/genetics.cpp src/fileio.cpp build/app_res.o \
+g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -DUNICODE -D_UNICODE -mwindows \
+  src/main.cpp src/ui.cpp src/views.cpp src/genetics.cpp src/textfile.cpp src/fileio.cpp build/app_res.o \
   -o DNAExpressionSim.exe \
   -lgdiplus -lcomdlg32 -lcomctl32 -lshell32 -lgdi32 -luser32 -lwinmm \
   -static -static-libgcc -static-libstdc++

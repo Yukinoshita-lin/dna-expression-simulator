@@ -16,6 +16,8 @@
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>
+#include <cstring>
 
 #ifndef EM_SETCUEBANNER
 #define EM_SETCUEBANNER (ECM_FIRST + 1)
@@ -32,6 +34,7 @@ static bool gEditFocused = false;
 static int gPressedBtn = 0;
 static bool gTrackingLeave = false;
 static bool gEditPending = false;
+static int gExitCode = 0;
 
 // ------------------------------------------------------------------ 示例
 static const char* kSample1 =
@@ -49,11 +52,21 @@ static const char* kSample3 =
     "ATGAATGGATCTCCCGAACACATATGTCTGCGTGAAACACTAGCTTCTATCTGTCCCTCTGCCGTGGTCGCAATCCCGTTAGTTTTTGTCTCTTAGCTGGTGTTCATACT";
 
 // ------------------------------------------------------------------ DPI
+// GetProcAddress 返回 FARPROC；用逐字节拷贝恢复真实函数指针签名，避免类型别名警告。
+template <typename Fn>
+static Fn loadFunction(HMODULE module, const char* name) {
+    FARPROC address = GetProcAddress(module, name);
+    Fn fn = nullptr;
+    static_assert(sizeof(fn) == sizeof(address), "Windows function pointers have one size");
+    if (address) std::memcpy(&fn, &address, sizeof(fn));
+    return fn;
+}
+
 static void enableDpiAwareness() {
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
     if (user32) {
         using SetCtxFn = BOOL(WINAPI*)(HANDLE);
-        auto setCtx = (SetCtxFn)GetProcAddress(user32, "SetProcessDpiAwarenessContext");
+        auto setCtx = loadFunction<SetCtxFn>(user32, "SetProcessDpiAwarenessContext");
         if (setCtx) {
             if (setCtx((HANDLE)-4)) return;   // PER_MONITOR_AWARE_V2
             if (setCtx((HANDLE)-3)) return;   // PER_MONITOR_AWARE
@@ -66,11 +79,11 @@ static UINT dpiOfWindow(HWND hwnd) {
     using GetDpiFn = UINT(WINAPI*)(HWND);
     static GetDpiFn fn = nullptr;
     static bool resolved = false;
-    if (!resolved) {
-        resolved = true;
-        HMODULE user32 = GetModuleHandleW(L"user32.dll");
-        if (user32) fn = (GetDpiFn)GetProcAddress(user32, "GetDpiForWindow");
-    }
+        if (!resolved) {
+            resolved = true;
+            HMODULE user32 = GetModuleHandleW(L"user32.dll");
+            if (user32) fn = loadFunction<GetDpiFn>(user32, "GetDpiForWindow");
+        }
     if (fn) return fn(hwnd);
     HDC dc = GetDC(hwnd);
     UINT dpi = (UINT)GetDeviceCaps(dc, LOGPIXELSX);
@@ -220,18 +233,17 @@ void recomputeFromEdit(App& a) {
     a.mrna = dna::transcribe(a.coding);
     a.tr = dna::translate(a.coding, a.frame);
 
+    // 优先展示影响 ORF 完整性的提示，再展示输入规范化等一般信息。
+    if (!a.tr.hasStart)
+        a.warnings.push_back(L"未找到起始密码子 ATG，翻译从当前阅读框起始处开始。");
+    if (!a.tr.hasStop)
+        a.warnings.push_back(L"未找到终止密码子，蛋白质序列可能不完整。");
     if (a.parsed.convertedU)
         a.warnings.push_back(L"检测到 U 碱基，已按 DNA 的 T 处理（转录结果中显示为 U）。");
     if (a.parsed.hasN)
         a.warnings.push_back(L"序列含 N（未知碱基），翻译时对应位置以 X 表示。");
     if (a.revcomp)
         a.warnings.push_back(L"当前使用反向互补链作为编码链（反向链基因）。");
-    if (!a.tr.hasStart)
-        a.warnings.push_back(L"未找到起始密码子 ATG，翻译从当前阅读框起始处开始。");
-    if (a.tr.hasStart && !a.tr.hasStop)
-        a.warnings.push_back(L"未找到终止密码子，蛋白质序列可能不完整。");
-    if (a.tr.hasStart && a.tr.hasStop && a.tr.protein.empty())
-        a.warnings.push_back(L"该 ORF 在起始密码子后立即终止，未产生多肽。");
     if (a.warnings.size() > 4) a.warnings.resize(4);
 
     float len = (float)a.coding.size();
@@ -1227,7 +1239,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             POINT p = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
             if (a.sliderVisible && hit(expandRect(a.sliderRc, 8 * a.s), p)) {
                 a.draggingSlider = true;
-                a.dragTab = a.tab;
                 SetCapture(hwnd);
                 setProgressFromPoint(a, p);
                 return 0;
@@ -1297,7 +1308,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             destroyBuffers(a);
             if (a.editBrush) DeleteObject(a.editBrush);
             if (a.editFont) DeleteObject(a.editFont);
-            PostQuitMessage(0);
+            PostQuitMessage(gExitCode);
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -1314,22 +1325,55 @@ struct Options {
     int revcomp = -1;
     bool rna = false;
     bool play = false;
+    bool force = false;
     std::wstring exportProtein;
     std::wstring exportDna;
     bool exitAfter = false;
+    std::wstring error;
 };
+
+static bool parseIntRange(const std::wstring& text, int minValue, int maxValue, int& value) {
+    if (text.empty()) return false;
+    wchar_t* end = nullptr;
+    errno = 0;
+    long parsed = std::wcstol(text.c_str(), &end, 10);
+    if (errno == ERANGE || end != text.c_str() + text.size() || parsed < minValue ||
+        parsed > maxValue)
+        return false;
+    value = (int)parsed;
+    return true;
+}
+
+static bool parseProgress(const std::wstring& text, float& value) {
+    if (text.empty()) return false;
+    wchar_t* end = nullptr;
+    errno = 0;
+    float parsed = std::wcstof(text.c_str(), &end);
+    if (errno == ERANGE || end != text.c_str() + text.size() || !std::isfinite(parsed) ||
+        parsed < 0.f || parsed > 1.f)
+        return false;
+    value = parsed;
+    return true;
+}
 
 static Options parseCommandLine() {
     Options o;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) return o;
+    if (!argv) {
+        o.error = L"无法解析命令行参数";
+        return o;
+    }
+    auto fail = [&](const std::wstring& message) {
+        if (o.error.empty()) o.error = message;
+    };
     for (int i = 1; i < argc; ++i) {
         std::wstring arg = argv[i];
         auto starts = [&](const wchar_t* p) { return arg.rfind(p, 0) == 0; };
         if (arg == L"--play") o.play = true;
         else if (arg == L"--revcomp") o.revcomp = 1;
         else if (arg == L"--rna") o.rna = true;
+        else if (arg == L"--force") o.force = true;
         else if (arg == L"--exit") o.exitAfter = true;
         else if (starts(L"--tab=")) {
             std::wstring v = arg.substr(6);
@@ -1337,21 +1381,28 @@ static Options parseCommandLine() {
             else if (v == L"transcription" || v == L"转录") o.tab = 1;
             else if (v == L"translation" || v == L"翻译") o.tab = 2;
             else if (v == L"codons" || v == L"codon" || v == L"密码子表") o.tab = 3;
-            else o.tab = std::max(0, std::min(3, _wtoi(v.c_str())));
+            else if (!parseIntRange(v, 0, 3, o.tab)) fail(L"--tab 参数无效：" + v);
         } else if (starts(L"--sample=")) {
-            o.sample = _wtoi(arg.substr(9).c_str());
+            std::wstring v = arg.substr(9);
+            if (!parseIntRange(v, 1, 3, o.sample)) fail(L"--sample 仅支持 1、2、3");
         } else if (starts(L"--seq=")) {
             o.seqGiven = true;
             o.seq = ui::narrow(arg.substr(6));
         } else if (starts(L"--progress=")) {
-            o.progress = (float)_wtof(arg.substr(11).c_str());
+            std::wstring v = arg.substr(11);
+            if (!parseProgress(v, o.progress)) fail(L"--progress 必须是 0.0 到 1.0 的数字");
         } else if (starts(L"--frame=")) {
-            int f = _wtoi(arg.substr(8).c_str());
-            o.frame = std::max(0, std::min(2, f - 1));
+            int f = -1;
+            if (!parseIntRange(arg.substr(8), 1, 3, f)) fail(L"--frame 仅支持 1、2、3");
+            else o.frame = f - 1;
         } else if (starts(L"--export-protein=")) {
             o.exportProtein = arg.substr(17);
+            if (o.exportProtein.empty()) fail(L"--export-protein 的路径不能为空");
         } else if (starts(L"--export-dna=")) {
             o.exportDna = arg.substr(13);
+            if (o.exportDna.empty()) fail(L"--export-dna 的路径不能为空");
+        } else {
+            fail(L"无法识别的命令行参数：" + arg);
         }
     }
     LocalFree(argv);
@@ -1359,7 +1410,7 @@ static Options parseCommandLine() {
 }
 
 static void applyOptions(App& a, const Options& o) {
-    if (o.sample > 0) loadSample(a, std::min(3, o.sample));
+    if (o.sample > 0) loadSample(a, o.sample);
     else if (o.seqGiven) applySequence(a, o.seq);
     if (o.frame >= 0) a.frame = o.frame;
     if (o.revcomp == 1) a.revcomp = true;
@@ -1367,22 +1418,30 @@ static void applyOptions(App& a, const Options& o) {
     if (o.tab >= 0) a.tab = o.tab;
     recomputeFromEdit(a);
     if (o.progress >= 0) {
-        float p = std::max(0.f, std::min(1.f, o.progress));
-        for (int i = 0; i < 3; ++i) a.progress[i] = p;
+        for (int i = 0; i < 3; ++i) a.progress[i] = o.progress;
     }
     buildLayout(a);
 
+    bool ok = true;
+    if ((o.seqGiven || o.sample > 0) && !a.hasSeq) ok = false;
     std::wstring err;
     if (!o.exportProtein.empty()) {
-        if (writeProteinFile(a, o.exportProtein, &err)) {
-            setStatus(a, L"蛋白质序列已导出到 " + o.exportProtein);
-        } else setStatus(a, L"导出失败：" + err);
+        if (writeProteinFile(a, o.exportProtein, &err, o.force)) {
+            if (ok) setStatus(a, L"蛋白质序列已导出到 " + o.exportProtein);
+        } else {
+            ok = false;
+            setStatus(a, L"导出失败：" + err);
+        }
     }
     if (!o.exportDna.empty()) {
-        if (writeDnaFile(a, o.exportDna, &err)) {
-            setStatus(a, L"DNA 序列已导出到 " + o.exportDna);
-        } else setStatus(a, L"导出失败：" + err);
+        if (writeDnaFile(a, o.exportDna, &err, o.force)) {
+            if (ok) setStatus(a, L"DNA 序列已导出到 " + o.exportDna);
+        } else {
+            ok = false;
+            setStatus(a, L"导出失败：" + err);
+        }
     }
+    gExitCode = ok ? 0 : 1;
     InvalidateRect(a.hwnd, nullptr, FALSE);
     if (o.play) startPlaying(a);
     if (o.exitAfter) PostMessageW(a.hwnd, WM_CLOSE, 0, 0);
@@ -1437,15 +1496,24 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
     Options opts = parseCommandLine();
-    applyOptions(gApp, opts);
+    if (!opts.error.empty()) {
+        gExitCode = 2;
+        if (!opts.exitAfter)
+            MessageBoxW(hwnd, opts.error.c_str(), L"命令行参数错误", MB_OK | MB_ICONERROR);
+        DestroyWindow(hwnd);
+    } else {
+        applyOptions(gApp, opts);
+    }
 
-    MSG msg;
-    while (GetMessageW(&msg, nullptr, 0, 0)) {
+    MSG msg{};
+    BOOL messageResult = 0;
+    while ((messageResult = GetMessageW(&msg, nullptr, 0, 0)) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    int exitCode = messageResult == -1 ? 1 : (int)msg.wParam;
     ui::clearFontCache();
     timeEndPeriod(1);
     gd::GdiplusShutdown(gGdiToken);
-    return 0;
+    return exitCode;
 }

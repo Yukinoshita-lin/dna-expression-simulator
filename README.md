@@ -12,7 +12,7 @@
 | --- | --- |
 | DNA 复制 | 半保留复制示意：解旋酶/复制叉移动，亲代双链拆分为两个子代双链；子代双链向外/向下分离，复制叉分叉并伴随分离粒子，旧链与新链分色显示 |
 | DNA 转录 | 转录泡、RNA 聚合酶沿模板链移动；mRNA 按 A–U、C–G 配对逐步延伸，5' 端随链延伸逐渐垂离模板，T→U 转换即时可见 |
-| 翻译 | 核糖体在密码子间平滑滑行，长链 mRNA 连续滚动；新氨基酸沿弧线从核糖体飞入肽链。多肽链以彩色圆珠的一维结构呈现，按性质着色，N 端 → C 端 |
+| 翻译 | 核糖体在密码子间平滑滑行，长链 mRNA 连续滚动；携带氨基酸的 tRNA 进入位点并完成反密码子配对，氨基酸沿弧线从 tRNA 移交入肽链后，空载 tRNA 离去。多肽链以彩色圆珠的一维结构呈现，按性质着色，N 端 → C 端 |
 | 密码子表 | 64 个密码子的经典排布；DNA/RNA（T/U）切换；点击查看中文名、三字母/单字母、性质、当前 ORF 使用次数；起始/终止密码子标记 |
 | 序列操作 | 输入、粘贴、FASTA/TXT 导入；大小写归一、U→T、去除空白与编号；N 视为未知碱基；长度、GC 含量、碱基组成统计 |
 | 阅读框控制 | +1/+2/+3 阅读框；反向互补链（反向链基因）；无 ATG / 无终止密码子时给出明确提示 |
@@ -39,6 +39,7 @@ DNAExpressionSim.exe --sample=2 --tab=translation --revcomp
 DNAExpressionSim.exe --seq=ATGAAGGTGGCCATCCTGAGCGACTAA --tab=transcription
 DNAExpressionSim.exe --tab=codons --rna
 DNAExpressionSim.exe --sample=1 --export-protein=protein.txt --export-dna=dna.txt --exit
+DNAExpressionSim.exe --sample=1 --export-dna=out.txt --force --exit
 ```
 
 | 参数 | 说明 |
@@ -52,7 +53,10 @@ DNAExpressionSim.exe --sample=1 --export-protein=protein.txt --export-dna=dna.tx
 | `--rna` | 密码子表以 RNA（U）显示 |
 | `--play` | 启动后自动播放 |
 | `--export-protein=<路径>` / `--export-dna=<路径>` | 无对话框直接导出（可配合 `--exit`） |
+| `--force` | 允许命令行导出覆盖已有文件；默认保留已有文件 |
 | `--exit` | 导出后退出 |
+
+> 自动化退出码：命令行导出失败返回 `1`；参数错误返回 `2`；成功返回 `0`。导出采用同目录临时文件写入并原子替换；未加 `--force` 时不会覆盖已有文件。
 
 ## 使用说明
 
@@ -80,7 +84,7 @@ DNAExpressionSim.exe --sample=1 --export-protein=protein.txt --export-dna=dna.tx
 ## 动画细节
 
 - **核糖体插值**：读取密码子时先停留，再用 smoothstep 在后 45% 的区间滑向下一个密码子；长序列采用连续相机，密码子条从核糖体下方平滑滚过，不再整页跳动。
-- **氨基酸入链**：当读取进度达到密码子的 35% 时，新氨基酸从核糖体顶部沿二次贝塞尔弧线飞向肽链末端，带虚线轨迹与淡光晕；飞行期间该位点暂时留空、C 端标签隐藏，落位后成为链上的圆珠。
+- **氨基酸入链**：携带氨基酸的 tRNA 先从右侧进入核糖体 A 位点；反密码子按 3'→5' 方向与当前 5'→3' 密码子互补配对。当读取进度达到密码子的 35% 时，氨基酸从 tRNA 3' 端脱离，沿二次贝塞尔弧线飞向肽链末端；空载 tRNA 随后向左侧淡出离去。
 - **子链分离**：复制叉向下分出两条子代 DNA，子代面板随进度向外、向下漂移，绿色/灰色粒子沿分叉路径运动；转录时 mRNA 的 5' 端越“老”越向下垂，形成与模板逐渐脱离的可视曲线。
 
 ## 密码子表
@@ -124,6 +128,7 @@ MKVAILSDEWNYFQRG
 
 > 若当前使用反向互补链，导出的 DNA 和蛋白质均基于“当前编码链”，并在蛋白质注释中注明。
 > 文本以 CRLF 换行，蛋白质文件带 UTF-8 BOM，便于 Windows 记事本直接打开。
+> GUI 保存对话框仍会先确认覆盖；所有导出都会先写入同目录临时文件，完整刷新后再替换目标文件。
 
 ## 构建
 
@@ -138,8 +143,8 @@ build.bat
 
 ```bat
 windres -i src\app.rc -o build\app_res.o --include-dir=src
-g++ -std=c++17 -O2 -DUNICODE -D_UNICODE -mwindows ^
-    src\main.cpp src\ui.cpp src\views.cpp src\genetics.cpp src\fileio.cpp build\app_res.o ^
+g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -DUNICODE -D_UNICODE -mwindows ^
+    src\main.cpp src\ui.cpp src\views.cpp src\genetics.cpp src\textfile.cpp src\fileio.cpp build\app_res.o ^
     -o DNAExpressionSim.exe ^
     -lgdiplus -lcomdlg32 -lcomctl32 -lshell32 -lgdi32 -luser32 -lwinmm ^
     -static -static-libgcc -static-libstdc++
@@ -153,11 +158,26 @@ Git Bash / MSYS2 下可执行 `./build.sh`。
 test.bat
 ```
 
-控制台单元测试覆盖：64 密码子与标准遗传密码逐项比对、序列清洗、U→T、N、互补/反向互补/转录、ORF 定位、阅读框、终止密码子、立即终止、分子量、导出文本、随机基因等，共 **44 项**，当前全部通过。
+控制台单元测试分两层：
+
+- `tests/test_genetics.cpp`：64 密码子与标准遗传密码逐项比对、序列清洗（含非法小写字母）、U→T、N、互补/反向互补/转录、ORF 定位、阅读框、终止密码子、立即终止、分子量、导出文本（含未知氨基酸 X）、随机基因等，共 **48 项**；
+- `tests/test_textfile.cpp`：原子写入、Unicode 路径、读取完整性、禁止覆盖、显式覆盖、UTF-8 BOM 与失败路径，共 **12 项**。
 
 ```text
-44 passed, 0 failed
+58 passed, 0 failed
 ```
+
+构建成功后还可运行 CLI 集成测试：
+
+```bat
+tests\test_cli.bat
+```
+
+它验证命令行导出、退出码（成功 `0`、导出失败 `1`、参数错误 `2`）、默认不覆盖、`--force` 覆盖和临时文件清理，共 **13 项**。`test.sh` 在 MSYS2 / Git Bash 下提供相同的单元测试入口。
+
+## 持续集成
+
+仓库包含 `.github/workflows/build.yml`，在 Windows runner 上依次安装 MinGW-w64、运行单元测试、构建应用、执行 CLI 集成测试，并上传 `DNAExpressionSim.exe` 构件。
 
 ## 项目结构
 
@@ -170,14 +190,20 @@ DNA/
 │  ├─ main.cpp               # Win32 窗口、布局、交互、动画、绘制框架
 │  ├─ ui.h/.cpp              # 主题、字体缓存、GDI+ 小工具
 │  ├─ views.cpp              # 复制 / 转录 / 翻译 / 密码子表四视图
+│  ├─ textfile.h/.cpp        # 与界面无关的文件读取和原子写入
 │  ├─ fileio.cpp             # 文件对话框、UTF-8/UTF-16 读取、TXT 写出
 │  ├─ app.rc / app.manifest / app.ico
-├─ tests/test_genetics.cpp   # 单元测试（44 项）
+├─ tests/
+│  ├─ test_genetics.cpp      # 遗传学核心单元测试（48 项）
+│  ├─ test_textfile.cpp      # 文件读写单元测试（12 项）
+│  ├─ test_cli.ps1/.bat      # 命令行与导出集成测试（13 项）
 ├─ samples/                  # 可直接导入的 FASTA 示例
 ├─ docs/                     # README 截图
 ├─ assets/                   # 应用图标源文件
-├─ tools/                    # 图标生成与截图脚本（开发用）
+├─ tools/                    # 图标生成与截图脚本（开发用，依赖见 requirements.txt）
+│                            # Python 图标脚本依赖：python -m pip install -r tools\requirements.txt
 ├─ build.bat / build.sh
+├─ test.bat / test.sh
 └─ README.md
 ```
 
@@ -199,6 +225,7 @@ DNA/
 - 翻译取所选阅读框内的**第一个 ATG**；软件不做剪接、启动子识别、甲基化或可变剪接模拟。
 - 由于只展示一维结构，不进行三维折叠、二级结构（α 螺旋/β 折叠）预测。
 - 蛋白质分子量由残基平均质量之和加一分子水估算，约到 0.1 Da，仅作教学参考。
+- 翻译结果含 N（未知碱基）时，对应氨基酸为 `X`；导出不显示“完整分子量”，只给出已知残基与水的质量下限，避免误读。
 - N（未知碱基）在翻译中输出为 `X`，不被视为终止密码子。
 - 序列长度上限 30,000 bp；长序列在视图中采用滑动窗口显示，导出仍针对完整序列。
 - 复制与转录动画为教学示意，不模拟冈崎片段、拓扑异构酶等全部细节。

@@ -5,60 +5,11 @@
 #include "app.h"
 #include "ui.h"
 #include "genetics.h"
+#include "textfile.h"
 
 #include <commdlg.h>
 #include <string>
 #include <vector>
-
-static bool readAllBytes(const std::wstring& path, std::vector<char>& data, std::wstring& err) {
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) {
-        err = L"无法打开文件（错误码 " + std::to_wstring(GetLastError()) + L"）";
-        return false;
-    }
-    LARGE_INTEGER size{};
-    if (!GetFileSizeEx(h, &size) || size.QuadPart > 16 * 1024 * 1024) {
-        CloseHandle(h);
-        err = L"文件为空或超过 16 MB";
-        return false;
-    }
-    data.resize((size_t)size.QuadPart);
-    size_t got = 0;
-    while (got < data.size()) {
-        DWORD n = 0;
-        DWORD want = (DWORD)std::min<size_t>(data.size() - got, 1u << 20);
-        if (!ReadFile(h, data.data() + got, want, &n, nullptr) || n == 0) break;
-        got += n;
-    }
-    CloseHandle(h);
-    data.resize(got);
-    return true;
-}
-
-static bool writeAllBytes(const std::wstring& path, const std::string& text, bool bom,
-                          std::wstring& err) {
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) {
-        err = L"无法写入文件（错误码 " + std::to_wstring(GetLastError()) + L"）";
-        return false;
-    }
-    bool ok = true;
-    if (bom) {
-        const unsigned char b[3] = {0xEF, 0xBB, 0xBF};
-        DWORD written = 0;
-        ok = WriteFile(h, b, 3, &written, nullptr) && written == 3;
-    }
-    if (ok) {
-        DWORD written = 0;
-        ok = WriteFile(h, text.data(), (DWORD)text.size(), &written, nullptr) &&
-             written == text.size();
-    }
-    CloseHandle(h);
-    if (!ok) err = L"写入文件时发生错误";
-    return ok;
-}
 
 static std::string crlf(const std::string& s) {
     std::string out;
@@ -141,7 +92,7 @@ bool importDnaFile(App& a) {
     if (!openSequenceDialog(a.hwnd, path)) return false;
     std::vector<char> bytes;
     std::wstring err;
-    if (!readAllBytes(path, bytes, err)) {
+    if (!textfile::readAll(path, bytes, err)) {
         MessageBoxW(a.hwnd, err.c_str(), L"导入失败", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -176,7 +127,7 @@ bool exportDnaFile(App& a) {
     std::wstring path;
     if (!saveSequenceDialog(a.hwnd, L"导出 DNA 序列", L"DNA_sequence.txt", path)) return false;
     std::wstring err;
-    if (!writeDnaFile(a, path, &err)) {
+    if (!writeDnaFile(a, path, &err, true)) {
         MessageBoxW(a.hwnd, err.c_str(), L"导出失败", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -195,7 +146,7 @@ bool exportProteinFile(App& a) {
     std::wstring path;
     if (!saveSequenceDialog(a.hwnd, L"导出蛋白质序列", L"protein_sequence.txt", path)) return false;
     std::wstring err;
-    if (!writeProteinFile(a, path, &err)) {
+    if (!writeProteinFile(a, path, &err, true)) {
         MessageBoxW(a.hwnd, err.c_str(), L"导出失败", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -204,21 +155,21 @@ bool exportProteinFile(App& a) {
     return true;
 }
 
-bool writeDnaFile(App& a, const std::wstring& path, std::wstring* err) {
+bool writeDnaFile(App& a, const std::wstring& path, std::wstring* err, bool overwrite) {
     if (!a.hasSeq) {
         if (err) *err = L"没有有效序列";
         return false;
     }
     std::string text = dna::buildDnaExport(a.coding, a.stats);
-    return writeAllBytes(path, crlf(text), false, *err);
+    return textfile::writeAtomic(path, crlf(text), false, overwrite, *err);
 }
 
-bool writeProteinFile(App& a, const std::wstring& path, std::wstring* err) {
+bool writeProteinFile(App& a, const std::wstring& path, std::wstring* err, bool overwrite) {
     if (!a.hasSeq || a.tr.protein.empty()) {
         if (err) *err = L"没有可导出的多肽";
         return false;
     }
-    std::string text = dna::buildProteinExport(a.coding, a.frame, a.revcomp, a.tr, a.stats,
+    std::string text = dna::buildProteinExport(a.frame, a.revcomp, a.tr, a.stats,
                                                ui::narrow(nowDateTime()));
-    return writeAllBytes(path, crlf(text), true, *err);
+    return textfile::writeAtomic(path, crlf(text), true, overwrite, *err);
 }

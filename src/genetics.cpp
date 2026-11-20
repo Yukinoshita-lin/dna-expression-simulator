@@ -44,7 +44,6 @@ const AminoAcid& aminoAcid(char letter) {
     return kAminoAcids[sizeof(kAminoAcids) / sizeof(kAminoAcids[0]) - 1];
 }
 
-const char* propertyColorKey(const char* property) { return property; }
 bool isStop(char aa) { return aa == '*'; }
 
 // ================================================================ 密码子表
@@ -110,7 +109,6 @@ ParseResult parseSequence(const std::string& raw) {
     std::string out;
     out.reserve(raw.size());
     bool invalidSeen[256] = {false};
-    int invalidCount = 0;
 
     std::size_t lineStart = 0;
     while (lineStart <= raw.size()) {
@@ -134,10 +132,9 @@ ParseResult parseSequence(const std::string& raw) {
                 } else if (up == 'N') {
                     out.push_back('N');
                     r.hasN = true;
-                } else if (c >= 'A' && c <= 'Z') {
+                } else if (up >= 'A' && up <= 'Z') {
                     if (!invalidSeen[(unsigned char)up] && r.invalidChars.size() < 8) {
                         r.invalidChars.push_back(up);
-                        ++invalidCount;
                     }
                     invalidSeen[(unsigned char)up] = true;
                 } else {
@@ -305,9 +302,8 @@ std::string buildDnaExport(const std::string& coding, const SequenceStats& stats
     return os.str();
 }
 
-std::string buildProteinExport(const std::string& coding, int frame, bool revcomp,
-                               const TranslationResult& tr, const SequenceStats& stats,
-                               const std::string& datetimeUtf8) {
+std::string buildProteinExport(int frame, bool revcomp, const TranslationResult& tr,
+                               const SequenceStats& stats, const std::string& datetimeUtf8) {
     std::ostringstream os;
     os.setf(std::ios::fixed);
     os.precision(1);
@@ -327,9 +323,17 @@ std::string buildProteinExport(const std::string& coding, int frame, bool revcom
     }
     os << "\n";
     os << "; 氨基酸数：" << tr.protein.size() << " aa";
-    if (!tr.protein.empty()) os << "，预测分子量：" << proteinMass(tr.protein) << " Da";
+    if (!tr.protein.empty()) {
+        if (tr.containsUnknown) os << "，完整分子量：无法估算（含未知氨基酸 X）";
+        else os << "，预测分子量：" << proteinMass(tr.protein) << " Da";
+    }
     os << "\n";
-    if (tr.containsUnknown) os << "; 注：序列含 N，对应位置以 X 表示未知氨基酸\n";
+    if (tr.containsUnknown) {
+        os << "; 注：序列含 N，对应位置以 X 表示未知氨基酸\n";
+        if (!tr.protein.empty())
+            os << "; 已知残基与水的质量下限：" << proteinMass(tr.protein)
+               << " Da（不含 X 的未知质量）\n";
+    }
     os << ">protein_1\n";
     os << (tr.protein.empty() ? std::string("(empty)") : wrapText(tr.protein, 60)) << "\n";
     if (!tr.protein.empty()) {
@@ -337,7 +341,6 @@ std::string buildProteinExport(const std::string& coding, int frame, bool revcom
         std::string triplets = proteinTriplets(tr.protein);
         os << "; " << wrapText(triplets, 64) << "\n";
     }
-    (void)coding;
     return os.str();
 }
 

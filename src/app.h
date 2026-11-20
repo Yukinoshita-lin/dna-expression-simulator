@@ -78,7 +78,6 @@ struct App {
     float progress[3] = {0.f, 0.f, 0.f};
     ULONGLONG lastTick = 0;
     bool draggingSlider = false;
-    int dragTab = -1;
 
     int frame = 0;
     bool revcomp = false;
@@ -178,6 +177,6 @@ void drawButton(gd::Graphics& g, App& a, const Button& b);
 bool importDnaFile(App& a);
 bool exportDnaFile(App& a);
 bool exportProteinFile(App& a);
-bool writeDnaFile(App& a, const std::wstring& path, std::wstring* err);
-bool writeProteinFile(App& a, const std::wstring& path, std::wstring* err);
+bool writeDnaFile(App& a, const std::wstring& path, std::wstring* err, bool overwrite);
+bool writeProteinFile(App& a, const std::wstring& path, std::wstring* err, bool overwrite);
 std::wstring fileNameOf(const std::wstring& path);

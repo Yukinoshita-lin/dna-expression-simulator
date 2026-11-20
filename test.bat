@@ -12,6 +12,10 @@ if errorlevel 1 (
   echo [ERROR] g++ not found. Install MinGW-w64 or set MINGW_BIN to its bin directory.
   exit /b 1
 )
-g++ -std=c++17 -O2 src\genetics.cpp tests\test_genetics.cpp -o tests\test_genetics.exe
+g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic src\genetics.cpp tests\test_genetics.cpp -o tests\test_genetics.exe
+if errorlevel 1 exit /b 1
+g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic src\textfile.cpp tests\test_textfile.cpp -o tests\test_textfile.exe
 if errorlevel 1 exit /b 1
 tests\test_genetics.exe
+if errorlevel 1 exit /b 1
+tests\test_textfile.exe

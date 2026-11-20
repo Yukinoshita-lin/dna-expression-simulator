@@ -81,8 +81,14 @@ int main() {
     }
     {
         auto r = parseSequence("ATG BXX");
-        check(!r.ok && r.errorCode == "invalid", "非法字母报错");
+        check(!r.ok && r.errorCode == "invalid", "非法大写字母报错");
         check(r.invalidChars.size() == 2, "去重后列出 2 个非法字母");
+    }
+    {
+        auto r = parseSequence("ATG bxx");
+        check(!r.ok && r.errorCode == "invalid", "非法小写字母不得静默忽略");
+        check(r.invalidChars.size() == 2 && r.invalidChars[0] == 'B' && r.invalidChars[1] == 'X',
+              "非法小写字母规范化后列出");
     }
     {
         auto r = parseSequence("   \n>only header\n");
@@ -155,11 +161,20 @@ int main() {
         auto seq = std::string("GGATCCATGAAGGTGGCCATCCTGAGCGACTAA");
         auto st = computeStats(seq);
         auto tr = translate(seq, 0);
-        std::string txt = buildProteinExport(seq, 0, false, tr, st, "2026-11-19 20:00");
+        std::string txt = buildProteinExport(0, false, tr, st, "2026-11-19 20:00");
         check(txt.find(">protein_1") != std::string::npos, "蛋白导出 FASTA 头");
         check(txt.find("MKVAILSD") != std::string::npos, "蛋白导出含序列");
         check(txt.find("终止密码子 TAA") != std::string::npos, "蛋白导出含终止信息");
         check(txt.find("Met Lys Val") != std::string::npos, "蛋白导出含三字母表示");
+    }
+    {
+        auto seq = std::string("ATGAAANNNTAA");
+        auto st = computeStats(seq);
+        auto tr = translate(seq, 0);
+        std::string txt = buildProteinExport(0, false, tr, st, "2026-11-19 20:00");
+        check(txt.find("完整分子量：无法估算") != std::string::npos,
+              "含 X 时不输出误导性的完整分子量");
+        check(txt.find("质量下限") != std::string::npos, "含 X 时明确标注部分质量下限");
     }
     {
         std::string r = randomGene(20);

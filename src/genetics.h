@@ -20,7 +20,6 @@ struct AminoAcid {
 };
 
 const AminoAcid& aminoAcid(char letter);          // 'A'..'Y'、'*'、'X'
-const char* propertyColorKey(const char* property);
 bool isStop(char aa);
 
 // ---------------------------------------------------------------- 密码子表
@@ -64,7 +63,6 @@ struct TranslationResult {
     bool hasStop = false;
     bool complete = false;
     bool containsUnknown = false;
-    bool ambiguousStop = false;
     int frame = 0;                 // 0,1,2
     int startIndex = -1;           // AUG 的 0 基下标
     int stopIndex = -1;            // 终止密码子首位的 0 基下标
@@ -84,8 +82,8 @@ int codonUsageInOrf(const TranslationResult& tr, const std::string& codon);
 // ---------------------------------------------------------------- 导出与工具
 std::string wrapText(const std::string& s, std::size_t width);
 std::string buildDnaExport(const std::string& coding, const SequenceStats& stats);
-std::string buildProteinExport(const std::string& coding, int frame, bool revcomp,
-                               const TranslationResult& tr, const SequenceStats& stats,
+std::string buildProteinExport(int frame, bool revcomp, const TranslationResult& tr,
+                               const SequenceStats& stats,
                                const std::string& datetimeUtf8);
 std::string randomGene(int codonCount);
 

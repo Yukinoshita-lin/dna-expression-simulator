@@ -23,6 +23,15 @@ static std::wstring rnaOf(const std::string& dna) {
     return w;
 }
 
+static float smooth01(float t) {
+    t = std::max(0.f, std::min(1.f, t));
+    return t * t * (3.f - 2.f * t);
+}
+
+static std::wstring anticodonOf(const std::string& dna) {
+    return rnaOf(dna::complement(dna));
+}
+
 static void viewHeader(App& a, Graphics& g, const wchar_t* title, const wchar_t* pill,
                        const std::wstring& rightText) {
     RectF inner = innerRect(a);
@@ -631,6 +640,94 @@ static void drawProteinPanel(App& a, Graphics& g, RectF panel, int beads, bool f
     }
 }
 
+// 绘制当前 tRNA：氨基酸在 3' 端，反密码子在下方与 mRNA 密码子互补配对。
+static void drawTrna(App& a, Graphics& g, const RectF& panel, const std::string& codonDna,
+                     char aa, float x, float codonY, float codonW, float codonH,
+                     float pairT, float leaveT, bool carrying, float yOffset) {
+    float s = a.s;
+    float visibility = 1.f - leaveT * 0.88f;
+    if (visibility <= 0.03f) return;
+    auto faded = [&](Color c, int alphaValue) {
+        return alpha(c, (int)std::lround(alphaValue * visibility));
+    };
+
+    std::wstring anti = anticodonOf(codonDna);
+    float antiH = 14.f * s;
+    float antiY = codonY + codonH + 28.f * s + yOffset;
+    float aaY = codonY - 35.f * s + yOffset;
+    float halfW = codonW * 0.5f;
+
+    // 简化的三叶草结构：左右/下方叶环 + 接纳茎，避免遮挡密码子本体。
+    Color bodyFill = faded(ACCENT_SOFT, 170);
+    Color bodyLine = faded(ACCENT, 110);
+    RectF body(x - halfW - 7.f * s, antiY - 2.f * s, codonW + 14.f * s,
+               antiH + 17.f * s);
+    fillRound(g, body, 9.f * s, bodyFill);
+    strokeRound(g, body, 9.f * s, bodyLine, 1.1f * s);
+    line(g, x - 10.f * s, antiY + antiH + 7.f * s, x, antiY + antiH - 1.f * s,
+         faded(ACCENT, 105), 1.2f * s);
+    line(g, x + 10.f * s, antiY + antiH + 7.f * s, x, antiY + antiH - 1.f * s,
+         faded(ACCENT, 105), 1.2f * s);
+    line(g, x, antiY + antiH + 13.f * s, x, antiY + antiH - 1.f * s,
+         faded(ACCENT, 105), 1.2f * s);
+    dot(g, x - 11.f * s, antiY + antiH + 7.f * s, 5.2f * s, faded(ACCENT, 85));
+    dot(g, x + 11.f * s, antiY + antiH + 7.f * s, 5.2f * s, faded(ACCENT, 85));
+    dot(g, x, antiY + antiH + 14.f * s, 5.8f * s, faded(ACCENT, 95));
+
+    // 反密码子按 3'→5' 方向展示；与同位置的 5'→3' 密码子逐碱基互补。
+    float baseW = codonW / 3.f;
+    for (int i = 0; i < 3; ++i) {
+        float bx = x - halfW + i * baseW;
+        float localPair = smooth01(pairT * 3.f - (float)i * 0.65f);
+        if (localPair > 0.03f) {
+            line(g, bx + baseW / 2.f, codonY + codonH - 1.f * s,
+                 bx + baseW / 2.f, antiY - 1.f * s,
+                 alpha(GREEN, (int)std::lround(145.f * localPair * visibility)),
+                 1.25f * s);
+        }
+        RectF br(bx, antiY, baseW, antiH);
+        text(g, std::wstring(1, anti[i]), br, font(8.8f * s, true, true),
+             faded(baseColor((char)anti[i]), 235), StringAlignmentCenter,
+             StringAlignmentCenter, false);
+    }
+    text(g, L"3'", RectF(x - halfW - 21.f * s, antiY, 18.f * s, antiH),
+         font(7.2f * s, true), faded(MUTED, 230), StringAlignmentCenter,
+         StringAlignmentCenter, false);
+    text(g, L"5'", RectF(x + halfW + 3.f * s, antiY, 18.f * s, antiH),
+         font(7.2f * s, true), faded(MUTED, 230), StringAlignmentCenter,
+         StringAlignmentCenter, false);
+
+    // 运载中的氨基酸挂在上端；移交后隐藏，由已有的飞入肽链动画接管。
+    if (carrying) {
+        const auto& info = dna::aminoAcid(aa);
+        Color pc = propColor(info.property);
+        GraphicsPath stem;
+        stem.AddBezier(x, aaY + 9.f * s, x - 30.f * s, codonY - 4.f * s,
+                       x - 30.f * s, antiY - 10.f * s, x - halfW + 2.f * s,
+                       antiY + 5.f * s);
+        Pen stemPen(faded(pc, 125), 1.5f * s);
+        stemPen.SetDashStyle(DashStyleDash);
+        g.DrawPath(&stemPen, &stem);
+        aaBead(g, x, aaY, 24.f * s, aa, 10.f * s);
+        std::wstring carryLabel = L"携带 " + utf8(info.code3);
+        text(g, carryLabel,
+             RectF(x + 13.f * s, aaY - 7.f * s, 58.f * s, 14.f * s),
+             font(7.4f * s, true), faded(pc, 225), StringAlignmentNear,
+             StringAlignmentCenter, true);
+    } else {
+        text(g, L"空载", RectF(x - halfW - 45.f * s, antiY + 1.f * s, 40.f * s, antiH),
+             font(7.4f * s, true), faded(MUTED, 220), StringAlignmentFar,
+             StringAlignmentCenter, true);
+    }
+
+    std::wstring labelText = L"tRNA 反密码子";
+    RectF labelRect(x + halfW + 22.f * s, antiY - 1.f * s, 92.f * s, antiH + 2.f * s);
+    if (labelRect.X + labelRect.Width > panel.X + panel.Width - 8.f * s)
+        labelRect = RectF(x - halfW - 114.f * s, antiY - 1.f * s, 92.f * s, antiH + 2.f * s);
+    text(g, labelText, labelRect, font(7.2f * s, true), faded(ACCENT, 225),
+         StringAlignmentCenter, StringAlignmentCenter, true);
+}
+
 static void drawTranslation(App& a, Graphics& g) {
     float s = a.s;
     RectF inner = innerRect(a);
@@ -696,8 +793,8 @@ static void drawTranslation(App& a, Graphics& g) {
     float stripH = 58.f * s;
     float availH = content.Height - stripH - 2 * gap;
     float proteinH = std::max(132.f * s, availH * 0.46f);
-    if (proteinH > availH - 150.f * s) proteinH = std::max(110.f * s, availH - 150.f * s);
-    float mrnaH = std::max(140.f * s, availH - proteinH);
+    if (proteinH > availH - 170.f * s) proteinH = std::max(110.f * s, availH - 170.f * s);
+    float mrnaH = std::max(168.f * s, availH - proteinH);
 
     RectF proteinPanel(content.X, content.Y, content.Width, proteinH);
     float lastBeadCx = 0.f, lastBeadCy = 0.f, lastBeadD = 0.f;
@@ -756,6 +853,16 @@ static void drawTranslation(App& a, Graphics& g) {
     float bigW = blockW + 20.f * s;
     float bigH = 30.f * s;
     float riboScreenX = centerX + (rpos - cam) * step;
+    float codonCenterX = centerX + ((float)ribo - cam) * step;
+
+    float trnaEnter = smooth01(frac / 0.20f);
+    float trnaPair = smooth01((frac - 0.16f) / 0.17f);
+    float trnaLeave = smooth01((frac - 0.48f) / 0.31f);
+    bool trnaActive = a.progress[2] < 0.999f && ribo < (int)a.tr.protein.size() &&
+                      !list[ribo].stop && frac > 0.01f && frac < 0.82f;
+    float trnaX = codonCenterX + (1.f - trnaEnter) * (blockW * 1.75f + 36.f * s) -
+                  trnaLeave * (blockW * 1.85f + 38.f * s);
+    float trnaYOffset = (1.f - trnaEnter) * 8.f * s - trnaLeave * 5.f * s;
 
     GraphicsState savedClip = g.Save();
     gd::RectF codonClip(mrnaPanel.X + 10.f * s, codonY - 62.f * s,
@@ -800,6 +907,7 @@ static void drawTranslation(App& a, Graphics& g) {
         float acx = x + blockW / 2.f;
         float acy = codonY + blockH + 22.f * s;
         bool newestFlying = flying && ci == read;
+        bool trnaHere = trnaActive && ci == ribo;
         if (isStop) {
             if (read >= ci) {
                 Font* sf = font(7.4f * s, true);
@@ -812,7 +920,7 @@ static void drawTranslation(App& a, Graphics& g) {
             }
         } else if (ci < beads) {
             if (!newestFlying) aaBead(g, acx, acy, adot, vc.aa, 7.6f * s);
-        } else {
+        } else if (!trnaHere) {
             dot(g, acx, acy, 2.4f * s, Color(255, 207, 216, 229));
         }
         if (a.tr.hasStart && ci < (int)a.tr.codons.size() &&
@@ -823,6 +931,11 @@ static void drawTranslation(App& a, Graphics& g) {
             text(g, L"起始", tag, tagf, GREEN, StringAlignmentCenter,
                  StringAlignmentCenter, false);
         }
+    }
+
+    if (trnaActive) {
+        drawTrna(a, g, mrnaPanel, list[ribo].dna, list[ribo].aa, trnaX, codonY, blockW,
+                 blockH, trnaPair, trnaLeave, frac < 0.35f, trnaYOffset);
     }
 
     // 密码子条边缘渐隐，遮住滑入/滑出的半张卡片
@@ -848,7 +961,7 @@ static void drawTranslation(App& a, Graphics& g) {
         Color pc = propColor(info.property);
         float t = flyT;
         float te = t * t * (3.f - 2.f * t);
-        float sx = riboScreenX;
+        float sx = codonCenterX;
         float sy = codonY - bigH - 5.f * s;
         float ex = lastBeadCx;
         float ey = lastBeadCy;
@@ -897,16 +1010,30 @@ static void drawTranslation(App& a, Graphics& g) {
         line1 = L"mRNA 已读完，但未找到终止密码子";
         line2 = L"多肽链可能不完整；请检查序列或更换阅读框。";
         stripAccent = AMBER;
-    } else if (read == 0) {
+    } else if (read == 0 && frac < 0.01f) {
         line1 = L"准备就绪 · 核糖体将扫描 mRNA";
         line2 = L"识别起始密码子 AUG 后，开始逐个读取密码子并添加氨基酸。";
+    } else if (ribo < (int)list.size() && list[ribo].stop) {
+        line1 = L"识别终止密码子 " + rnaOf(list[ribo].dna);
+        line2 = L"终止密码子没有对应的 tRNA；释放因子促使多肽链释放。";
     } else if (ribo < (int)list.size() && ribo < (int)a.tr.protein.size()) {
         char aa = a.tr.protein[ribo];
         const auto& info = dna::aminoAcid(aa);
         std::wstring codonRna = rnaOf(list[ribo].dna);
+        std::wstring antiRna = anticodonOf(list[ribo].dna);
         line1 = L"正在读取 " + codonRna + L" → " + utf8(info.nameZh) + L" " +
                 utf8(info.code3) + L" / " + std::wstring(1, (wchar_t)aa);
-        line2 = std::wstring(L"氨基酸性质：") + utf8(info.propertyZh) + L" · 每个密码子决定一个氨基酸";
+        if (frac < 0.18f)
+            line2 = L"携带氨基酸的 tRNA 正在进入核糖体 A 位点。";
+        else if (frac < 0.35f)
+            line2 = L"反密码子 3'-" + antiRna + L"-5' 与密码子 5'-" + codonRna +
+                    L"-3' 互补配对。";
+        else if (frac < 0.50f)
+            line2 = L"氨基酸从 tRNA 移交给肽链，空载 tRNA 准备离开。";
+        else if (frac < 0.82f)
+            line2 = L"空载 tRNA 正在离开核糖体，为下一个 tRNA 腾出位点。";
+        else
+            line2 = L"核糖体沿 mRNA 向 3' 端移动，准备读取下一个密码子。";
     } else {
         line1 = L"翻译进行中";
         line2 = L"核糖体沿 mRNA 向 3' 端移动。";

@@ -11,6 +11,7 @@
 # Local QA / diagnostics
 /shots/
 /qa/
+/.workbuddy/
 perf.txt
 trace_*.txt
 trace_layout.txt

@@ -1,0 +1,36 @@
+name: build-and-test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MinGW-w64
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: Run unit tests
+        shell: cmd
+        run: test.bat
+
+      - name: Build application
+        shell: cmd
+        run: build.bat
+
+      - name: Run CLI integration tests
+        shell: cmd
+        run: tests\test_cli.bat
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: DNAExpressionSim
+          path: DNAExpressionSim.exe

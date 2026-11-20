@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Yukinoshita-lin
 param(
-  [string]$Out = "F:\DNA\shots\shot.png",
+  [string]$Out = "",
   [string]$AppArgs = "",
   [int]$DelayMs = 1400
 )
+$ErrorActionPreference = "Stop"
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$AppPath = Join-Path $ProjectRoot "DNAExpressionSim.exe"
+if (-not (Test-Path -LiteralPath $AppPath)) { throw "Application not found: $AppPath" }
+if ([string]::IsNullOrWhiteSpace($Out)) { $Out = Join-Path $ProjectRoot "shots\shot.png" }
+$OutDirectory = Split-Path -Parent $Out
+if (-not (Test-Path -LiteralPath $OutDirectory)) { New-Item -ItemType Directory -Path $OutDirectory | Out-Null }
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 Add-Type @"
 using System;
@@ -27,9 +34,9 @@ public class ShotWinApi {
 }
 "@
 if ([string]::IsNullOrWhiteSpace($AppArgs)) {
-  $p = Start-Process -FilePath "F:\DNA\DNAExpressionSim.exe" -PassThru
+  $p = Start-Process -FilePath $AppPath -PassThru
 } else {
-  $p = Start-Process -FilePath "F:\DNA\DNAExpressionSim.exe" -ArgumentList $AppArgs -PassThru
+  $p = Start-Process -FilePath $AppPath -ArgumentList $AppArgs -PassThru
 }
 Start-Sleep -Milliseconds 1000
 $null = $p.WaitForInputIdle(3000)
@@ -50,4 +57,5 @@ $g.Dispose(); $bmp.Dispose()
 $p.CloseMainWindow() | Out-Null
 Start-Sleep -Milliseconds 400
 if (!$p.HasExited) { $p.Kill() }
+$p.Dispose()
 Write-Output "saved $Out"
